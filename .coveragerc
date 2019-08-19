@@ -158,7 +158,6 @@ omit =
     homeassistant/components/ecovacs/*
     homeassistant/components/eddystone_temperature/sensor.py
     homeassistant/components/edimax/switch.py
-    homeassistant/components/edp_redy/*
     homeassistant/components/egardia/*
     homeassistant/components/eight_sleep/*
     homeassistant/components/eliqonline/sensor.py
@@ -317,6 +316,8 @@ omit =
     homeassistant/components/knx/*
     homeassistant/components/knx/climate.py
     homeassistant/components/knx/cover.py
+    homeassistant/components/kodi/__init__.py
+    homeassistant/components/kodi/const.py
     homeassistant/components/kodi/media_player.py
     homeassistant/components/kodi/notify.py
     homeassistant/components/konnected/*
@@ -533,7 +534,6 @@ omit =
     homeassistant/components/rtorrent/sensor.py
     homeassistant/components/russound_rio/media_player.py
     homeassistant/components/russound_rnet/media_player.py
-    homeassistant/components/ruter/sensor.py
     homeassistant/components/sabnzbd/*
     homeassistant/components/satel_integra/*
     homeassistant/components/scrape/sensor.py

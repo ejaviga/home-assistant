@@ -1,6 +1,9 @@
 """Http views to control the config manager."""
+import voluptuous as vol
+
 from homeassistant import config_entries, data_entry_flow
 from homeassistant.auth.permissions.const import CAT_CONFIG_ENTRIES
+from homeassistant.components import websocket_api
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.exceptions import Unauthorized
 from homeassistant.helpers.data_entry_flow import (
@@ -17,12 +20,17 @@ async def async_setup(hass):
     hass.http.register_view(ConfigManagerFlowIndexView(hass.config_entries.flow))
     hass.http.register_view(ConfigManagerFlowResourceView(hass.config_entries.flow))
     hass.http.register_view(ConfigManagerAvailableFlowView)
+
     hass.http.register_view(
         OptionManagerFlowIndexView(hass.config_entries.options.flow)
     )
     hass.http.register_view(
         OptionManagerFlowResourceView(hass.config_entries.options.flow)
     )
+
+    hass.components.websocket_api.async_register_command(system_options_list)
+    hass.components.websocket_api.async_register_command(system_options_update)
+
     return True
 
 
@@ -54,8 +62,18 @@ class ConfigManagerEntryIndexView(HomeAssistantView):
         """List available config entries."""
         hass = request.app["hass"]
 
-        return self.json(
-            [
+        results = []
+
+        for entry in hass.config_entries.async_entries():
+            handler = config_entries.HANDLERS.get(entry.domain)
+            supports_options = (
+                # Guard in case handler is no longer registered (custom compnoent etc)
+                handler is not None
+                # pylint: disable=comparison-with-callable
+                and handler.async_get_options_flow
+                != config_entries.ConfigFlow.async_get_options_flow
+            )
+            results.append(
                 {
                     "entry_id": entry.entry_id,
                     "domain": entry.domain,
@@ -63,14 +81,11 @@ class ConfigManagerEntryIndexView(HomeAssistantView):
                     "source": entry.source,
                     "state": entry.state,
                     "connection_class": entry.connection_class,
-                    "supports_options": hasattr(
-                        config_entries.HANDLERS.get(entry.domain),
-                        "async_get_options_flow",
-                    ),
+                    "supports_options": supports_options,
                 }
-                for entry in hass.config_entries.async_entries()
-            ]
-        )
+            )
+
+        return self.json(results)
 
 
 class ConfigManagerEntryResourceView(HomeAssistantView):
@@ -187,8 +202,8 @@ class ConfigManagerAvailableFlowView(HomeAssistantView):
 class OptionManagerFlowIndexView(FlowManagerIndexView):
     """View to create option flows."""
 
-    url = "/api/config/config_entries/entry/option/flow"
-    name = "api:config:config_entries:entry:resource:option:flow"
+    url = "/api/config/config_entries/options/flow"
+    name = "api:config:config_entries:option:flow"
 
     # pylint: disable=arguments-differ
     async def post(self, request):
@@ -224,3 +239,40 @@ class OptionManagerFlowResourceView(FlowManagerResourceView):
 
         # pylint: disable=no-value-for-parameter
         return await super().post(request, flow_id)
+
+
+@websocket_api.require_admin
+@websocket_api.async_response
+@websocket_api.websocket_command(
+    {"type": "config_entries/system_options/list", "entry_id": str}
+)
+async def system_options_list(hass, connection, msg):
+    """List all system options for a config entry."""
+    entry_id = msg["entry_id"]
+    entry = hass.config_entries.async_get_entry(entry_id)
+
+    if entry:
+        connection.send_result(msg["id"], entry.system_options.as_dict())
+
+
+@websocket_api.require_admin
+@websocket_api.async_response
+@websocket_api.websocket_command(
+    {
+        "type": "config_entries/system_options/update",
+        "entry_id": str,
+        vol.Optional("disable_new_entities"): bool,
+    }
+)
+async def system_options_update(hass, connection, msg):
+    """Update config entry system options."""
+    changes = dict(msg)
+    changes.pop("id")
+    changes.pop("type")
+    entry_id = changes.pop("entry_id")
+    entry = hass.config_entries.async_get_entry(entry_id)
+
+    if entry and changes:
+        entry.system_options.update(**changes)
+
+        connection.send_result(msg["id"], entry.system_options.as_dict())
