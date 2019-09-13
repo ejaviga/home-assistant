@@ -15,6 +15,7 @@ from homeassistant.components.media_player import MediaPlayerDevice
 from homeassistant.components.media_player.const import (
     ATTR_MEDIA_ENQUEUE,
     MEDIA_TYPE_MUSIC,
+    MEDIA_TYPE_PLAYLIST,
     SUPPORT_CLEAR_PLAYLIST,
     SUPPORT_NEXT_TRACK,
     SUPPORT_PAUSE,
@@ -336,7 +337,15 @@ class SonosEntity(MediaPlayerDevice):
     async def async_added_to_hass(self):
         """Subscribe sonos events."""
         await self.async_seen()
+
         self.hass.data[DATA_SONOS].entities.append(self)
+
+        def _rebuild_groups():
+            """Build the current group topology."""
+            for entity in self.hass.data[DATA_SONOS].entities:
+                entity.update_groups()
+
+        self.hass.async_add_executor_job(_rebuild_groups)
 
     @property
     def unique_id(self):
@@ -468,10 +477,6 @@ class SonosEntity(MediaPlayerDevice):
             self.update_volume()
             self._set_favorites()
 
-            # New player available, build the current group topology
-            for entity in self.hass.data[DATA_SONOS].entities:
-                entity.update_groups()
-
             player = self.soco
 
             def subscribe(service, action):
@@ -601,7 +606,7 @@ class SonosEntity(MediaPlayerDevice):
             #   media_artist = "Station - Artist - Title"
             # detect this case and trim from the front of
             # media_artist for cosmetics
-            trim = "{title} - ".format(title=self._media_title)
+            trim = f"{self._media_title} - "
             chars = min(len(self._media_artist), len(trim))
 
             if self._media_artist[:chars].upper() == trim[:chars].upper():
@@ -938,20 +943,35 @@ class SonosEntity(MediaPlayerDevice):
         """
         Send the play_media command to the media player.
 
+        If media_type is "playlist", media_id should be a Sonos
+        Playlist name.  Otherwise, media_id should be a URI.
+
         If ATTR_MEDIA_ENQUEUE is True, add `media_id` to the queue.
         """
-        if kwargs.get(ATTR_MEDIA_ENQUEUE):
+        if media_type == MEDIA_TYPE_MUSIC:
+            if kwargs.get(ATTR_MEDIA_ENQUEUE):
+                try:
+                    self.soco.add_uri_to_queue(media_id)
+                except SoCoUPnPException:
+                    _LOGGER.error(
+                        'Error parsing media uri "%s", '
+                        "please check it's a valid media resource "
+                        "supported by Sonos",
+                        media_id,
+                    )
+            else:
+                self.soco.play_uri(media_id)
+        elif media_type == MEDIA_TYPE_PLAYLIST:
             try:
-                self.soco.add_uri_to_queue(media_id)
-            except SoCoUPnPException:
-                _LOGGER.error(
-                    'Error parsing media uri "%s", '
-                    "please check it's a valid media resource "
-                    "supported by Sonos",
-                    media_id,
-                )
+                playlists = self.soco.get_sonos_playlists()
+                playlist = next(p for p in playlists if p.title == media_id)
+                self.soco.clear_queue()
+                self.soco.add_to_queue(playlist)
+                self.soco.play_from_queue(0)
+            except StopIteration:
+                _LOGGER.error('Could not find a Sonos playlist named "%s"', media_id)
         else:
-            self.soco.play_uri(media_id)
+            _LOGGER.error('Sonos does not support a media type of "%s"', media_type)
 
     @soco_error()
     def join(self, slaves):
